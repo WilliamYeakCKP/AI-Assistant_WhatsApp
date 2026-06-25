@@ -1,7 +1,9 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import requests
 import random
+import os
+API_KEY = os.environ.get("GEMINI_API_KEY")
 
 app = Flask(__name__) 
 CORS(app)
@@ -51,8 +53,7 @@ def chat():
         reply = f"Error: {str(e)}"
 
     # ✅ ✅ ✅ 返回 Twilio 格式（关键）
-    return f"""
-    <Response>
-        <Message>{reply}</Message>
-    </Response>
-    """
+    return Response(
+        f"<Response><Message>{reply}</Message></Response>",
+        mimetype="text/xml"
+    )
