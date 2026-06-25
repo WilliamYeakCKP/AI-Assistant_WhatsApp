@@ -1,8 +1,12 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import requesrs
+import random
 
 app = Flask(__name__) 
 CORS(app)
+
+chat_history = []
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -36,7 +40,10 @@ def chat():
         response = requests.post(url, json=payload, timeout=20)
         result = response.json()
 
-        reply = result["candidates"][0]["content"]["parts"][0]["text"]
+        try:
+            reply = result["candidates"][0]["content"]["parts"][0]["text"]
+        except:
+            reply = "AI failed to respond, try again 😅"
 
         chat_history.append({"role": "ai", "text": reply})
 
