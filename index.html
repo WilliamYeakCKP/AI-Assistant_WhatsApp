@@ -1,0 +1,34 @@
+async function sendMessage() {
+    let input = document.getElementById("msg");
+    let message = input.value;
+
+    if (!message) return;
+
+    let chat = document.getElementById("chat");
+
+    // ✅ Debug：发送前log
+    console.log("Sending:", message);
+
+    // 显示用户消息
+    chat.innerHTML += "<p><b>You:</b> " + message + "</p>";
+
+    input.value = "";
+
+    let res = await fetch("/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ message: message })
+    });
+
+    let data = await res.json();
+
+    // ✅ Debug：收到回复log
+    console.log("Response:", data);
+
+    // 显示AI回复
+    chat.innerHTML += "<p><b>AI:</b> " + data.reply + "</p>";
+
+    chat.scrollTop = chat.scrollHeight;
+}
