@@ -4,11 +4,41 @@ import requests
 import random
 import os
 API_KEY = os.environ.get("GEMINI_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 app = Flask(__name__) 
 CORS(app)
 
 chat_history = []
+
+def call_openai(prompt):
+    try:
+        url = "https://api.openai.com/v1/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+
+        if response.status_code != 200:
+            print("OpenAI failed:", response.text)
+            return None
+
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
+
+    except Exception as e:
+        print("OpenAI error:", e)
+        return None
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -43,10 +73,23 @@ def chat():
         result = response.json()
         print("DEBUG:", result)
 
-        try:
-            reply = result["candidates"][0]["content"]["parts"][0]["text"]
-        except:
-            reply = "AI failed to respond, try again 😅"
+        reply = None
+
+        if "candidates" in result and len(result["candidates"]) > 0:
+            try:
+                reply = result["candidates"][0]["content"]["parts"][0]["text"]
+            except:
+                reply = None
+
+        # ✅ ✅ 如果 Gemini失败 → 用 OpenAI
+        if not reply:
+            print("Switching to OpenAI fallback...")
+            reply = call_openai(history_text)
+
+        # ✅ ✅ 如果全部失败
+        if not reply:
+            reply = "AI is busy right now, please try again later 🚦"
+
 
         chat_history.append({"role": "ai", "text": reply})
 
