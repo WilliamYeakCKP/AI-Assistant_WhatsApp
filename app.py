@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requesrs
+import requests
 import random
 
 app = Flask(__name__) 
