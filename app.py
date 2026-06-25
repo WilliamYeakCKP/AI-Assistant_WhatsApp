@@ -41,6 +41,7 @@ def chat():
     try:
         response = requests.post(url, json=payload, timeout=20)
         result = response.json()
+        print("DEBUG:", result)
 
         try:
             reply = result["candidates"][0]["content"]["parts"][0]["text"]
