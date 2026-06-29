@@ -1,7 +1,6 @@
 flask
 flask-cors
 requests
-sqlite3
 faiss-cpu
 sentence-transformers
 numpy
