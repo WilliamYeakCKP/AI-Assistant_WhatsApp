@@ -12,9 +12,9 @@ SERP_API_KEY = os.environ.get("SERP_API_KEY")
 app = Flask(__name__)
 CORS(app)
 
-# ✅ ======================
+# =========================
 # ✅ SQLite
-# ✅ ======================
+# =========================
 def init_db():
     conn = sqlite3.connect("chat.db")
     cursor = conn.cursor()
@@ -47,22 +47,40 @@ def save_message(user_id, role, message):
     conn.close()
 
 
-# ✅ ======================
-# ✅ 搜索缓存（核心🔥）
-# ✅ ======================
+def get_history(user_id, limit=5):
+    conn = sqlite3.connect("chat.db")
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT message FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+        (user_id, limit)
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    rows.reverse()
+    return [row[0] for row in rows]
+
+
+# =========================
+# ✅ Search Cache（关键🔥）
+# =========================
 search_cache = {}
 
 
-# ✅ ======================
+# =========================
 # ✅ Google Search
-# ✅ ======================
+# =========================
 def search_google(query):
-    # ✅ 优先用缓存
+    # ✅ 先查缓存
     if query in search_cache:
-        print("Using cached result ✅")
+        print("✅ Using cache")
         return search_cache[query]
 
     try:
+        print("🌐 Calling SerpAPI")
+
         url = "https://serpapi.com/search"
 
         params = {
@@ -95,9 +113,9 @@ def search_google(query):
         return None
 
 
-# ✅ ======================
+# =========================
 # ✅ OpenAI fallback
-# ✅ ======================
+# =========================
 def call_openai(prompt):
     try:
         url = "https://api.openai.com/v1/chat/completions"
@@ -131,18 +149,20 @@ def call_openai(prompt):
     return None
 
 
-# ✅ ======================
+# =========================
 # ✅ CHAT
-# ✅ ======================
+# =========================
 @app.route("/chat", methods=["POST"])
 def chat():
 
+    # ✅ 用户ID
     user_id = (
         request.values.get("From")
         or (request.json.get("From") if request.is_json else None)
         or "test_user"
     )
 
+    # ✅ 用户信息
     user_message = (
         request.values.get("Body")
         or (request.json.get("message") if request.is_json else None)
@@ -151,39 +171,45 @@ def chat():
 
     print("USER:", user_message)
 
-    # ✅ 存用户消息
+    # ✅ 保存用户消息
     save_message(user_id, "user", user_message)
 
-    # ✅ ======================
+    # ✅ ✅ ✅ 关键：读取历史（修复memory）
+    history = get_history(user_id, 5)
+
+    # =========================
     # ✅ 判断是否需要搜索
-    # ✅ ======================
-    search_keywords = [
-        "news", "latest", "today", "price", "weather", "who is"
-    ]
+    # =========================
+    search_keywords = ["news", "latest", "today", "price", "weather", "who is"]
 
     search_result = None
 
     if any(word in user_message.lower() for word in search_keywords):
-        print("Trigger search 🔍")
+        print("🔍 Trigger search")
         search_result = search_google(user_message)
 
-    # ✅ ======================
-    # ✅ 构建 prompt
-    # ✅ ======================
+    # =========================
+    # ✅ 构建 prompt（核心🔥）
+    # =========================
     prompt = ""
 
-    # ✅ 如果有搜索结果 → 加进去
+    # ✅ 1️⃣ 加历史（memory）
+    for msg in history:
+        prompt += msg + "\n"
+
+    # ✅ 2️⃣ 加搜索
     if search_result:
-        prompt += "Here is some recent information from the web:\n"
+        prompt += "\nRecent web info:\n"
         prompt += search_result + "\n\n"
 
+    # ✅ 3️⃣ 当前问题
     prompt += user_message
 
-    print("PROMPT:", prompt)
+    print("PROMPT:\n", prompt)
 
-    # ✅ ======================
+    # =========================
     # ✅ Gemini
-    # ✅ ======================
+    # =========================
     reply = None
 
     try:
@@ -211,7 +237,7 @@ def chat():
     if not reply or reply.strip() == "":
         reply = "AI is currently unavailable, please try again later"
 
-    # ✅ 存 AI 回复
+    # ✅ 保存 AI 回复
     save_message(user_id, "ai", reply)
 
     return Response(
