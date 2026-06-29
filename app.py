@@ -191,7 +191,22 @@ def chat():
     # =========================
     # ✅ 构建 prompt（核心🔥）
     # =========================
-    prompt = ""
+    system_instruction = """
+    You are an AI assistant.
+
+    If the user wants to perform an action (like scheduling, sending email),
+    you MUST respond ONLY in JSON format like this:
+
+    {
+        "action": "create_calendar_event",
+        "title": "...",
+        "time": "..."
+    }
+    
+    If it is a normal question, just answer normally.
+    """
+
+    prompt = system_instruction + "\n\n"
 
     # ✅ 1️⃣ 加历史（memory）
     for msg in history:
@@ -232,6 +247,35 @@ def chat():
     if not reply:
         print("Switching to OpenAI")
         reply = call_openai(prompt)
+
+    import json
+
+    action_data = None
+
+    # ✅ 尝试解析 JSON
+    try:
+        action_data = json.loads(reply)
+        print("Parsed action:", action_data)
+    except:
+        action_data = None
+
+    # ✅ 如果是 action → 执行
+    if action_data and "action" in action_data:
+
+        action = action_data["action"]
+
+        if action == "create_calendar_event":
+            title = action_data.get("title", "Meeting")
+            time = action_data.get("time", "")
+
+            reply = f"✅ Meeting scheduled: {title} at {time}"
+
+        elif action == "send_email":
+            to = action_data.get("to", "")
+            reply = f"✅ Email sent to {to}"
+
+        else:
+            reply = "⚠️ Unknown action"
 
     # ✅ 最终保险
     if not reply or reply.strip() == "":
