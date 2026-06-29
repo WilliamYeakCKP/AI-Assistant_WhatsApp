@@ -5,10 +5,11 @@ import os
 import sqlite3
 import json
 
+# ======================
 # ✅ ENV
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# ======================
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-SERP_API_KEY = os.environ.get("SERP_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GOOGLE_ACCESS_TOKEN = os.environ.get("GOOGLE_ACCESS_TOKEN")
 
 app = Flask(__name__)
@@ -39,10 +40,12 @@ init_db()
 def save_message(user_id, role, message):
     conn = sqlite3.connect("chat.db")
     cursor = conn.cursor()
+
     cursor.execute(
         "INSERT INTO chat_history (user_id, role, message) VALUES (?, ?, ?)",
         (user_id, role, message)
     )
+
     conn.commit()
     conn.close()
 
@@ -61,6 +64,64 @@ def get_history(user_id, limit=5):
 
     rows.reverse()
     return [r[0] for r in rows]
+
+
+# ======================
+# ✅ OpenAI（主模型🔥）
+# ======================
+def call_openai(prompt):
+    try:
+        url = "https://api.openai.com/v1/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+
+        res = requests.post(url, headers=headers, json=payload)
+        data = res.json()
+
+        print("OpenAI RAW:", data)
+
+        if "choices" in data:
+            return data["choices"][0]["message"]["content"]
+
+    except Exception as e:
+        print("OpenAI error:", e)
+
+    return None
+
+
+# ======================
+# ✅ Gemini（备用）
+# ======================
+def call_gemini(prompt):
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}]
+        }
+
+        res = requests.post(url, json=payload)
+        result = res.json()
+
+        print("Gemini RAW:", result)
+
+        if "candidates" in result:
+            return result["candidates"][0]["content"]["parts"][0]["text"]
+
+    except Exception as e:
+        print("Gemini error:", e)
+
+    return None
 
 
 # ======================
@@ -88,6 +149,8 @@ def create_google_event(title, time_str):
 
     res = requests.post(url, headers=headers, json=payload)
 
+    print("Google response:", res.status_code, res.text)
+
     return res.status_code == 200
 
 
@@ -109,16 +172,23 @@ def chat():
         or ""
     )
 
+    print("USER:", user_message)
+
+    # ✅ memory
     save_message(user_id, "user", user_message)
     history = get_history(user_id, 5)
 
-    # ✅ prompt
+    # ======================
+    # ✅ Prompt
+    # ======================
     system_instruction = """
 You are an AI assistant.
 
-ONLY output JSON when the user explicitly asks to perform an action like scheduling a meeting.
+ONLY output JSON when the user explicitly asks to perform an action such as scheduling a meeting.
 
-Otherwise, reply normally.
+Otherwise reply normally.
+
+When outputting JSON, DO NOT include explanation text.
 
 Example JSON:
 {
@@ -135,37 +205,38 @@ Example JSON:
 
     prompt += user_message
 
-    # ✅ Gemini
-    reply = None
+    print("PROMPT:", prompt)
 
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # ======================
+    # ✅ AI call（OpenAI优先🔥）
+    # ======================
+    reply = call_openai(prompt)
 
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}]
-        }
+    if not reply:
+        print("Switching to Gemini...")
+        reply = call_gemini(prompt)
 
-        res = requests.post(url, json=payload)
-        result = res.json()
+    print("AI reply:", reply)
 
-        if "candidates" in result:
-            reply = result["candidates"][0]["content"]["parts"][0]["text"]
-
-    except:
-        pass
-
-    # ✅ parsing action
+    # ======================
+    # ✅ Action Parsing
+    # ======================
     action_data = None
 
     if reply and reply.strip().startswith("{"):
         try:
             action_data = json.loads(reply)
+            print("Parsed action:", action_data)
         except:
             action_data = None
 
+    # ======================
+    # ✅ Execute Action
+    # ======================
     if action_data and "action" in action_data:
 
         if action_data["action"] == "create_calendar_event":
+
             title = action_data.get("title", "Meeting")
             time = action_data.get("time", "")
 
@@ -176,6 +247,9 @@ Example JSON:
             else:
                 reply = "❌ Failed to create event"
 
+    # ======================
+    # ✅ Final fallback
+    # ======================
     if not reply:
         reply = "AI error"
 
