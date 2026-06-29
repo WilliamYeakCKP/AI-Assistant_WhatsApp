@@ -11,10 +11,18 @@ from datetime import datetime, timedelta
 # ======================
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GOOGLE_ACCESS_TOKEN = os.environ.get("GOOGLE_ACCESS_TOKEN")
+
+GOOGLE_REFRESH_TOKEN = os.environ.get("GOOGLE_REFRESH_TOKEN")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 
 app = Flask(__name__)
 CORS(app)
+
+# ======================
+# ✅ GLOBAL（简化 demo）
+# ======================
+last_event_id = None
 
 # ======================
 # ✅ SQLite
@@ -68,7 +76,33 @@ def get_history(user_id, limit=5):
 
 
 # ======================
-# ✅ OpenAI（主）
+# ✅ TOKEN REFRESH 🔥
+# ======================
+def refresh_access_token():
+    try:
+        url = "https://oauth2.googleapis.com/token"
+
+        payload = {
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "refresh_token": GOOGLE_REFRESH_TOKEN,
+            "grant_type": "refresh_token"
+        }
+
+        res = requests.post(url, data=payload)
+        data = res.json()
+
+        print("Refresh:", data)
+
+        return data.get("access_token")
+
+    except Exception as e:
+        print("Refresh error:", e)
+        return None
+
+
+# ======================
+# ✅ OPENAI（主）
 # ======================
 def call_openai(prompt):
     try:
@@ -87,7 +121,7 @@ def call_openai(prompt):
         res = requests.post(url, headers=headers, json=payload)
         data = res.json()
 
-        print("OpenAI RAW:", data)
+        print("OpenAI:", data)
 
         if "choices" in data:
             return data["choices"][0]["message"]["content"]
@@ -99,39 +133,17 @@ def call_openai(prompt):
 
 
 # ======================
-# ✅ Gemini（备用）
+# ✅ GOOGLE ACTIONS
 # ======================
-def call_gemini(prompt):
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+def create_event(title, time_str):
+    global last_event_id
 
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}]
-        }
-
-        res = requests.post(url, json=payload)
-        result = res.json()
-
-        print("Gemini RAW:", result)
-
-        if "candidates" in result:
-            return result["candidates"][0]["content"]["parts"][0]["text"]
-
-    except Exception as e:
-        print("Gemini error:", e)
-
-    return None
-
-
-# ======================
-# ✅ Google Calendar
-# ======================
-def create_google_event(title, time_str):
+    access_token = refresh_access_token()
 
     url = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 
     headers = {
-        "Authorization": f"Bearer {GOOGLE_ACCESS_TOKEN}",
+        "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
 
@@ -149,9 +161,68 @@ def create_google_event(title, time_str):
 
     res = requests.post(url, headers=headers, json=payload)
 
-    print("Google response:", res.status_code, res.text)
+    print("Create:", res.status_code, res.text)
+
+    if res.status_code == 200:
+        event = res.json()
+        last_event_id = event.get("id")
+        return True
+
+    return False
+
+
+def update_event(new_time):
+    global last_event_id
+
+    if not last_event_id:
+        return False
+
+    access_token = refresh_access_token()
+
+    url = f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{last_event_id}"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "start": {
+            "dateTime": new_time,
+            "timeZone": "Asia/Kuala_Lumpur"
+        },
+        "end": {
+            "dateTime": new_time,
+            "timeZone": "Asia/Kuala_Lumpur"
+        }
+    }
+
+    res = requests.patch(url, headers=headers, json=payload)
+
+    print("Update:", res.status_code)
 
     return res.status_code == 200
+
+
+def delete_event():
+    global last_event_id
+
+    if not last_event_id:
+        return False
+
+    access_token = refresh_access_token()
+
+    url = f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{last_event_id}"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+
+    res = requests.delete(url, headers=headers)
+
+    print("Delete:", res.status_code)
+
+    return res.status_code == 204
 
 
 # ======================
@@ -177,27 +248,33 @@ def chat():
     save_message(user_id, "user", user_message)
     history = get_history(user_id, 5)
 
-    # ✅ ✅ ✅ 动态时间（关键修复🔥）
+    # ✅ 动态时间
     current_time = datetime.now().isoformat()
 
     system_instruction = f"""
 You are an AI assistant.
 
-Current date and time: {current_time}
+Current date: {current_time}
 
-When scheduling events:
-- ALWAYS use the correct CURRENT YEAR
-- ALWAYS schedule in the FUTURE
-- Interpret "tomorrow" correctly
+Supported actions:
+- create_calendar_event
+- update_calendar_event
+- delete_calendar_event
 
-ONLY output JSON when performing an action.
+Always:
+- Use FUTURE time
+- Use correct year
 
-Example:
-{{
-  "action": "create_calendar_event",
-  "title": "Meeting",
-  "time": "YYYY-MM-DDTHH:MM:SS"
-}}
+Examples:
+
+Create:
+{{"action": "create_calendar_event", "title": "Meeting", "time": "YYYY-MM-DDTHH:MM:SS"}}
+
+Move:
+{{"action": "update_calendar_event", "time": "YYYY-MM-DDTHH:MM:SS"}}
+
+Delete:
+{{"action": "delete_calendar_event"}}
 """
 
     prompt = system_instruction + "\n\n"
@@ -207,35 +284,25 @@ Example:
 
     prompt += user_message
 
-    print("PROMPT:", prompt)
-
-    # ✅ AI call
     reply = call_openai(prompt)
 
-    if not reply:
-        print("Switching to Gemini...")
-        reply = call_gemini(prompt)
+    print("AI:", reply)
 
-    print("AI reply:", reply)
-
-    # ======================
-    # ✅ 解析 JSON
-    # ======================
+    # ✅ JSON parse
     action_data = None
 
     if reply and reply.strip().startswith("{"):
         try:
             action_data = json.loads(reply)
-            print("Parsed action:", action_data)
         except:
             action_data = None
 
-    # ======================
-    # ✅ 执行动作（带防呆🔥）
-    # ======================
+    # ✅ EXECUTE
     if action_data and "action" in action_data:
 
-        if action_data["action"] == "create_calendar_event":
+        action = action_data["action"]
+
+        if action == "create_calendar_event":
 
             title = action_data.get("title", "Meeting")
             time_str = action_data.get("time", "")
@@ -243,35 +310,36 @@ Example:
             try:
                 event_time = datetime.fromisoformat(time_str)
 
-                # ✅ 如果AI给了过去时间 → 自动修正
                 if event_time < datetime.now():
-                    print("⚠️ Fixing past time → auto adjust")
-
-                    event_time = datetime.now().replace(
-                        hour=15, minute=0, second=0, microsecond=0
-                    ) + timedelta(days=1)
+                    event_time = datetime.now() + timedelta(days=1)
+                    event_time = event_time.replace(hour=15, minute=0, second=0)
 
                 time_str = event_time.isoformat()
 
             except:
-                print("⚠️ Bad time format → fallback")
+                time_str = (datetime.now() + timedelta(days=1)).isoformat()
 
-                event_time = datetime.now().replace(
-                    hour=15, minute=0, second=0, microsecond=0
-                ) + timedelta(days=1)
-
-                time_str = event_time.isoformat()
-
-            success = create_google_event(title, time_str)
-
-            if success:
-                reply = f"✅ Event created: {title} at {time_str}"
+            if create_event(title, time_str):
+                reply = f"✅ Created: {title} at {time_str}"
             else:
-                reply = "❌ Failed to create event"
+                reply = "❌ Create failed"
 
-    # ======================
-    # ✅ fallback
-    # ======================
+        elif action == "update_calendar_event":
+
+            new_time = action_data.get("time", "")
+
+            if update_event(new_time):
+                reply = "✅ Event moved"
+            else:
+                reply = "❌ Move failed (no event?)"
+
+        elif action == "delete_calendar_event":
+
+            if delete_event():
+                reply = "✅ Event deleted"
+            else:
+                reply = "❌ Delete failed (no event?)"
+
     if not reply:
         reply = "AI error"
 
