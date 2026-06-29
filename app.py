@@ -194,15 +194,21 @@ def chat():
     system_instruction = """
     You are an AI assistant.
 
-    If the user wants to perform an action (like scheduling, sending email),
-    you MUST respond ONLY in JSON format like this:
+    system_instruction = """
+    You are an AI assistant.
 
+    ONLY output JSON when the user EXPLICITLY requests an action 
+    like scheduling a meeting or sending an email.
+
+    Otherwise, reply normally in plain text.
+
+    Example JSON format:
     {
         "action": "create_calendar_event",
         "title": "...",
         "time": "..."
     }
-    
+    """
     If it is a normal question, just answer normally.
     """
 
@@ -254,13 +260,26 @@ def chat():
 
     # ✅ 尝试解析 JSON
     try:
-        action_data = json.loads(reply)
+        action_data = None
+
+        if reply.strip().startswith("{"):
+            try:
+                action_data = json.loads(reply)
+                print("Parsed action:", action_data)
+            except:
+                action_data = None
+
         print("Parsed action:", action_data)
     except:
         action_data = None
 
     # ✅ 如果是 action → 执行
-    if action_data and "action" in action_data:
+    if (
+        action_data
+        and isinstance(action_data, dict)
+        and "action" in action_data
+        and action_data["action"] in ["create_calendar_event", "send_email"]
+    ):
 
         action = action_data["action"]
 
