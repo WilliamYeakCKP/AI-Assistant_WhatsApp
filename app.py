@@ -123,4 +123,3 @@ def chat():
         f"<Response><Message>{reply}</Message></Response>",
         mimetype="text/xml"
     )
-``
