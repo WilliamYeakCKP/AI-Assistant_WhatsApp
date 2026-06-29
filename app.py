@@ -194,13 +194,9 @@ def chat():
     system_instruction = """
     You are an AI assistant.
 
-    system_instruction = """
-    You are an AI assistant.
+    ONLY output JSON when the user EXPLICITLY requests an action like scheduling a meeting or sending an email.
 
-    ONLY output JSON when the user EXPLICITLY requests an action 
-    like scheduling a meeting or sending an email.
-
-    Otherwise, reply normally in plain text.
+    Otherwise, reply normally.
 
     Example JSON format:
     {
@@ -208,8 +204,6 @@ def chat():
         "title": "...",
         "time": "..."
     }
-    """
-    If it is a normal question, just answer normally.
     """
 
     prompt = system_instruction + "\n\n"
