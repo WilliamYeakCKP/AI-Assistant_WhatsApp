@@ -3,22 +3,15 @@ from flask_cors import CORS
 import requests
 import os
 import sqlite3
-import faiss
-import numpy as np
-from sentence_transformers import SentenceTransformer
 
-# =======================
-# ✅ API KEYS
-# =======================
+# ✅ API keys
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 app = Flask(__name__)
 CORS(app)
 
-# =======================
-# ✅ SQLite 初始化
-# =======================
+# ✅ ✅ ✅ 初始化数据库
 def init_db():
     conn = sqlite3.connect("chat.db")
     cursor = conn.cursor()
@@ -37,9 +30,8 @@ def init_db():
 
 init_db()
 
-# =======================
-# ✅ SQLite 存 / 读
-# =======================
+
+# ✅ ✅ 存消息
 def save_message(user_id, role, message):
     conn = sqlite3.connect("chat.db")
     cursor = conn.cursor()
@@ -53,58 +45,26 @@ def save_message(user_id, role, message):
     conn.close()
 
 
+# ✅ ✅ 读取最近历史（限制长度防爆 token）
 def get_history(user_id, limit=5):
     conn = sqlite3.connect("chat.db")
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT message FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+        "SELECT role, message FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT ?",
         (user_id, limit)
     )
 
     rows = cursor.fetchall()
     conn.close()
 
+    # ✅ 反转顺序（最旧 → 最新）
     rows.reverse()
-    return [row[0] for row in rows]
+
+    return rows
 
 
-# =======================
-# ✅ FAISS VECTOR
-# =======================
-model = SentenceTransformer("all-MiniLM-L6-v2")
-
-dimension = 384
-index = faiss.IndexFlatL2(dimension)
-
-vector_store = []
-
-
-def store_vector(text):
-    vector = model.encode([text])
-    index.add(np.array(vector))
-    vector_store.append(text)
-
-
-def search_vector(query, top_k=3):
-    if len(vector_store) == 0:
-        return []
-
-    query_vector = model.encode([query])
-    D, I = index.search(np.array(query_vector), top_k)
-
-    results = []
-
-    for i in I[0]:
-        if i < len(vector_store):
-            results.append(vector_store[i])
-
-    return results
-
-
-# =======================
-# ✅ OpenAI fallback
-# =======================
+# ✅ ✅ OpenAI fallback
 def call_openai(prompt):
     try:
         url = "https://api.openai.com/v1/chat/completions"
@@ -129,7 +89,7 @@ def call_openai(prompt):
 
         data = res.json()
 
-        if "choices" in data:
+        if "choices" in data and len(data["choices"]) > 0:
             return data["choices"][0]["message"]["content"]
 
     except Exception as e:
@@ -138,64 +98,39 @@ def call_openai(prompt):
     return None
 
 
-# =======================
-# ✅ CHAT ENDPOINT
-# =======================
 @app.route("/chat", methods=["POST"])
 def chat():
+    # ✅ 用户ID（WhatsApp / Hoppscotch兼容）
+    user_id = request.values.get("From") or request.json.get("From") or "test_user"
 
-    # ✅ user id（支持 WhatsApp + Hoppscotch）
-    user_id = (
-        request.values.get("From")
-        or (request.json.get("From") if request.is_json else None)
-        or "test_user"
-    )
+    # ✅ 用户消息
+    user_message = request.values.get("Body") or request.json.get("message")
 
-    # ✅ message
-    user_message = (
-        request.values.get("Body")
-        or (request.json.get("message") if request.is_json else None)
-        or ""
-    )
-
-    print("USER:", user_message, "| ID:", user_id)
-
-    # ✅ 存入SQLite
+    # ✅ 保存用户消息
     save_message(user_id, "user", user_message)
 
-    # ✅ 存入vector
-    store_vector(user_message)
-
-    # ===================
-    # ✅ 取 relevant memory
-    # ===================
-    relevant_memory = search_vector(user_message)
-
-    # ✅ fallback（没vector时）
-    if not relevant_memory:
-        relevant_memory = get_history(user_id, 5)
+    # ✅ 获取历史
+    history_rows = get_history(user_id, limit=5)
 
     # ✅ 拼 prompt
-    prompt = "\n".join(relevant_memory)
-    prompt += "\n" + user_message
+    history_text = ""
+    for role, message in history_rows:
+        history_text += f"{message}\n"
 
-    print("PROMPT:", prompt)
+    print("PROMPT:", history_text)
 
-    # ===================
-    # ✅ Gemini
-    # ===================
+    # ✅ Gemini API
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
+
+    payload = {
+        "contents": [{"parts": [{"text": history_text}]}]
+    }
+
     reply = None
 
     try:
-        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
-
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}]
-        }
-
         res = requests.post(url, json=payload, timeout=15)
         result = res.json()
-
         print("Gemini:", result)
 
         if "candidates" in result and len(result["candidates"]) > 0:
@@ -204,24 +139,19 @@ def chat():
     except Exception as e:
         print("Gemini error:", e)
 
-    # ===================
-    # ✅ fallback → OpenAI
-    # ===================
+    # ✅ fallback
     if not reply:
-        print("Switching to OpenAI")
-        reply = call_openai(prompt)
+        print("Switching to OpenAI fallback...")
+        reply = call_openai(history_text)
 
-    # ===================
     # ✅ 最终保险
-    # ===================
     if not reply or reply.strip() == "":
         reply = "AI is currently unavailable, please try again later"
 
-    # ✅ 存 AI 回复
+    # ✅ 保存 AI 回复
     save_message(user_id, "ai", reply)
-    store_vector(reply)
 
-    # ✅ 返回
+    # ✅ 返回 Twilio
     return Response(
         f"<Response><Message>{reply}</Message></Response>",
         mimetype="text/xml"
