@@ -70,7 +70,7 @@ def chat():
     for item in chat_history:
         history_text += f"{item['text']}\n"
 
-    history_text += f"#{random.randint(1,10000)}"
+    history_text = history_text.strip()
 
     # ✅ Gemini URL
     url = f"https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash:generateContent?key={API_KEY}"
