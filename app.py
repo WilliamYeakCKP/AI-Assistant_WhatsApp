@@ -56,8 +56,8 @@ def call_openai(prompt):
 def chat():
     global chat_history
 
-    # ✅ WhatsApp 输入
-    user_message = request.values.get("Body", "Hello")
+    # ✅ WhatsApp 输入 JSON 测试
+    user_message = request.values.get("Body") or request.json.get("message")
 
     chat_history.append({"role": "user", "text": user_message})
 
