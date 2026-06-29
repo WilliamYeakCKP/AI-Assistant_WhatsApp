@@ -94,7 +94,9 @@ def search_vector(query, top_k=3):
     D, I = index.search(np.array(query_vector), top_k)
 
     results = []
-    for i in Iif i < len(vector_store):
+
+    for i in I[0]:
+        if i < len(vector_store):
             results.append(vector_store[i])
 
     return results
