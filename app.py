@@ -4,6 +4,7 @@ import requests
 import os
 import sqlite3
 import json
+from datetime import datetime, timedelta
 
 # ======================
 # ✅ ENV
@@ -67,7 +68,7 @@ def get_history(user_id, limit=5):
 
 
 # ======================
-# ✅ OpenAI（主模型🔥）
+# ✅ OpenAI（主）
 # ======================
 def call_openai(prompt):
     try:
@@ -80,9 +81,7 @@ def call_openai(prompt):
 
         payload = {
             "model": "gpt-4o-mini",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ]
+            "messages": [{"role": "user", "content": prompt}]
         }
 
         res = requests.post(url, headers=headers, json=payload)
@@ -128,6 +127,7 @@ def call_gemini(prompt):
 # ✅ Google Calendar
 # ======================
 def create_google_event(title, time_str):
+
     url = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 
     headers = {
@@ -174,28 +174,30 @@ def chat():
 
     print("USER:", user_message)
 
-    # ✅ memory
     save_message(user_id, "user", user_message)
     history = get_history(user_id, 5)
 
-    # ======================
-    # ✅ Prompt
-    # ======================
-    system_instruction = """
+    # ✅ ✅ ✅ 动态时间（关键修复🔥）
+    current_time = datetime.now().isoformat()
+
+    system_instruction = f"""
 You are an AI assistant.
 
-ONLY output JSON when the user explicitly asks to perform an action such as scheduling a meeting.
+Current date and time: {current_time}
 
-Otherwise reply normally.
+When scheduling events:
+- ALWAYS use the correct CURRENT YEAR
+- ALWAYS schedule in the FUTURE
+- Interpret "tomorrow" correctly
 
-When outputting JSON, DO NOT include explanation text.
+ONLY output JSON when performing an action.
 
-Example JSON:
-{
+Example:
+{{
   "action": "create_calendar_event",
-  "title": "...",
-  "time": "..."
-}
+  "title": "Meeting",
+  "time": "YYYY-MM-DDTHH:MM:SS"
+}}
 """
 
     prompt = system_instruction + "\n\n"
@@ -207,9 +209,7 @@ Example JSON:
 
     print("PROMPT:", prompt)
 
-    # ======================
-    # ✅ AI call（OpenAI优先🔥）
-    # ======================
+    # ✅ AI call
     reply = call_openai(prompt)
 
     if not reply:
@@ -219,7 +219,7 @@ Example JSON:
     print("AI reply:", reply)
 
     # ======================
-    # ✅ Action Parsing
+    # ✅ 解析 JSON
     # ======================
     action_data = None
 
@@ -231,24 +231,46 @@ Example JSON:
             action_data = None
 
     # ======================
-    # ✅ Execute Action
+    # ✅ 执行动作（带防呆🔥）
     # ======================
     if action_data and "action" in action_data:
 
         if action_data["action"] == "create_calendar_event":
 
             title = action_data.get("title", "Meeting")
-            time = action_data.get("time", "")
+            time_str = action_data.get("time", "")
 
-            success = create_google_event(title, time)
+            try:
+                event_time = datetime.fromisoformat(time_str)
+
+                # ✅ 如果AI给了过去时间 → 自动修正
+                if event_time < datetime.now():
+                    print("⚠️ Fixing past time → auto adjust")
+
+                    event_time = datetime.now().replace(
+                        hour=15, minute=0, second=0, microsecond=0
+                    ) + timedelta(days=1)
+
+                time_str = event_time.isoformat()
+
+            except:
+                print("⚠️ Bad time format → fallback")
+
+                event_time = datetime.now().replace(
+                    hour=15, minute=0, second=0, microsecond=0
+                ) + timedelta(days=1)
+
+                time_str = event_time.isoformat()
+
+            success = create_google_event(title, time_str)
 
             if success:
-                reply = f"✅ Google Calendar event created: {title}"
+                reply = f"✅ Event created: {title} at {time_str}"
             else:
                 reply = "❌ Failed to create event"
 
     # ======================
-    # ✅ Final fallback
+    # ✅ fallback
     # ======================
     if not reply:
         reply = "AI error"
