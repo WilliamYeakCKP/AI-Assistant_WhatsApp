@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 # ======================
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GOOGLE_ACCESS_TOKEN = os.environ.get("GOOGLE_ACCESS_TOKEN")
+SERP_API_KEY = os.environ.get("SERP_API_KEY")
 
 app = Flask(__name__)
 CORS(app)
@@ -78,6 +79,60 @@ def get_history(user_id, limit=6):
         history += f"{role}: {msg}\n"
 
     return history
+
+
+# ======================
+# SEARCH
+# ======================
+
+search_cache = {}
+
+def search_google(query):
+
+    if query in search_cache:
+        print("Using cached search")
+        return search_cache[query]
+
+    try:
+
+        url = "https://serpapi.com/search.json"
+
+        params = {
+            "q": query,
+            "api_key": SERP_API_KEY,
+            "num": 5
+        }
+
+        res = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
+
+        data = res.json()
+
+        snippets = []
+
+        for item in data.get("organic_results", [])[:5]:
+
+            title = item.get("title", "")
+            snippet = item.get("snippet", "")
+
+            snippets.append(
+                f"{title}: {snippet}"
+            )
+
+        result = "\n".join(snippets)
+
+        search_cache[query] = result
+
+        return result
+
+    except Exception as e:
+
+        print("Search error:", e)
+
+        return ""
 
 
 # ======================
@@ -211,6 +266,36 @@ def chat():
 
     history = get_history(user_id)
 
+    search_words = [
+        "latest",
+        "news",
+        "today",
+        "current",
+        "price",
+        "stock",
+        "weather",
+        "search",
+        "find",
+        "who is",
+        "what is microsoft",
+        "what is openai"
+    ]
+
+    needs_search = any(
+        word in user_message.lower()
+        for word in search_words
+    )
+
+    search_result = ""
+
+    if needs_search:
+
+        print("SEARCH TRIGGERED")
+
+        search_result = search_google(user_message)
+
+        print(search_result)
+
     now_str = datetime.now().isoformat()
 
     system_instruction = f"""
@@ -234,6 +319,9 @@ what is my name
 These MUST NOT return JSON.
 
 ONLY return JSON if the user explicitly wants a calendar action.
+If Web Search Results contains information,
+use it when answering questions about news,
+current events, weather, stock prices and recent topics.
 
 Examples:
 
@@ -260,15 +348,18 @@ Move my meeting tomorrow 5pm
 """
 
     prompt = f"""
-{system_instruction}
+    {system_instruction}
 
-Conversation History:
-{history}
+    Conversation History:
+    {history}
 
-User:
-{user_message}
-"""
+    Web Search Results:
+    {search_result}
 
+    User:
+    {user_message}
+    """
+    
     reply = call_openai(prompt)
 
     print("AI:", reply)
